@@ -38,6 +38,8 @@ img_r_grey = img_r_grey_full
 img_l = img_l[...,::-1]
 img_r = img_r[...,::-1]
 
+img_d = cv2.imread(disp_image_name,-1)/256.0
+
 
 # note: can perform downscaling of the images to speed up computation at the cost of quality degradation
 scale_percentage = 100
@@ -47,6 +49,7 @@ dim = (width, height)
 
 img_l_grey = np.int32(cv2.resize(img_l_grey_full.astype('float32'), dim, interpolation = cv2.INTER_AREA))
 img_r_grey = np.int32(cv2.resize(img_r_grey_full.astype('float32'), dim, interpolation = cv2.INTER_AREA))
+img_d = np.int32(cv2.resize(img_d.astype('float32'), dim, interpolation = cv2.INTER_AREA))
 
 h,w = img_r_grey.shape
 
@@ -60,7 +63,6 @@ measure = "NCC"
 min_bound = np.int32(boundary_size)
 max_bound = np.int32(len(img_l_grey[0])-boundary_size)
 
-img_d = cv2.imread(disp_image_name,-1)/256.0
 
 from skimage.graph import shortest_path, route_through_array, MCP
 # Code adapted from skimage.shortest_path algorithm
@@ -172,12 +174,37 @@ def main():
         pool.join()
         disp_result = np.array(disp_result)
         calc_disp2[row_index,min_bound:max_bound] = disp_result
+
+        # dim = (img_l_grey_full.shape[1], img_l_grey_full.shape[0])
+        # calc_disp2 = np.int32(cv2.resize(calc_disp2.astype('float32'), dim, interpolation = cv2.INTER_AREA))
+        compute_RMSE(calc_disp2)
         end = time.time()
         print(end-start)
+
+        plt.subplots(1,2, figsize=(15,10))
+        plt.subplot(1,2,1)
         plt.imshow(calc_disp2, cmap='plasma',vmin=0)
+        plt.title('Disparity image using shortest path')
+
+        plt.subplot(1,2,2)
+        plt.imshow(img_d, cmap='plasma',vmin=0)
+        plt.title('Ground truth')
         plt.show()
-        plt.savefig("disparity_parallel.png")
         plt.close()
+
+def compute_RMSE(calc_disp2):
+    h,w = img_d.shape
+    assert(img_d.shape == calc_disp2.shape)
+    MSE = []
+
+    for i in range(h):
+        for j in range(w):
+            if img_d[i,j] != 0:
+                MSE.append(abs(calc_disp2[i,j]-img_d[i,j]))
+
+    MSE = np.array(MSE)
+    for i in [0.25,0.5,1,2,4][::-1]:
+        print(f'Fraction of {len(MSE[MSE < i])/len(img_d[img_d>0]):.2f} with pixel error less than {i} pixels')
 
 if __name__ == '__main__':
     main()
