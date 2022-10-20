@@ -5,6 +5,7 @@ import numpy as np
 import cv2
 import multiprocessing as mp
 import time
+from skimage.graph import shortest_path, route_through_array, MCP
 
 # Import images 
 directory = './Dataset/'
@@ -19,7 +20,7 @@ for filename in allfiles:
 
 # Perform on first image for now 
 
-file = filenames[3]
+file = filenames[0]
 
 left_image_name = directory + file + 'left.jpg'
 right_image_name = directory+ file + 'right.jpg'
@@ -51,7 +52,7 @@ img_d = cv2.imread(disp_image_name,-1)/256.0
 # img_d = np.int32(cv2.resize(img_d.astype('float32'), dim, interpolation = cv2.INTER_AREA))
 
 h,w = img_r_grey.shape
-boundary_size = 3
+boundary_size = 2
 neighbourhood_l = 200
 neighbourhood_r = 50
 step_size = 1
@@ -62,7 +63,6 @@ min_bound = np.int32(boundary_size)
 max_bound = np.int32(len(img_l_grey[0])-boundary_size)
 
 
-from skimage.graph import shortest_path, route_through_array, MCP
 # Code adapted from skimage.shortest_path algorithm
 def my_shortest_path(arr, reach=1, axis=-1, output_indexlist=False):
     # First: calculate the valid moves from any given position. Basically,
@@ -209,9 +209,11 @@ def compute_RMSE(calc_disp2):
     for i in range(h):
         for j in range(w):
             if img_d[i,j] != 0:
-                MSE.append(abs(calc_disp2[i,j]-img_d[i,j]))
+                MSE.append(np.square(calc_disp2[i,j]-img_d[i,j]))
 
     MSE = np.array(MSE)
+    print(f'RMSE of {math.sqrt(MSE.mean()):.2f}')
+
     for i in [0.25,0.5,1,2,4][::-1]:
         print(f'Fraction of {len(MSE[MSE < i])/len(img_d[img_d>0]):.2f} with pixel error less than {i} pixels')
 
@@ -228,7 +230,7 @@ def main():
         pool.join()
         disp_result = np.array(disp_result)
         calc_disp1[row_index,min_bound:max_bound] = disp_result
-        bilateral_disp = cv2.bilateralFilter(np.uint8(calc_disp1),7,50,50)
+        bilateral_disp = cv2.bilateralFilter(np.uint8(calc_disp1),boundary_size*2+1,100,100)
 
     with mp.Pool(processes = mp.cpu_count()-1) as pool:
         disp_result = pool.map(compute_row_path, row_index)
@@ -239,13 +241,13 @@ def main():
 
 
     print()
-    print("RMSE with no smoothing:")
+    print("No smoothing:")
     compute_RMSE(calc_disp1)
     print()
-    print("RMSE with bilateral filter smoothing:")
+    print("Bilateral filter smoothing:")
     compute_RMSE(bilateral_disp)
     print()    
-    print("RMSE with shortest path smoothing:")
+    print("Shortest path smoothing:")
     compute_RMSE(calc_disp2)
     end = time.time()
     print(f"Time to process disparity images: {end-start:.2f}s")
@@ -266,6 +268,8 @@ def main():
     plt.subplot(2,2,4)
     plt.imshow(img_d, cmap='plasma',vmin=0)
     plt.title('Ground truth')
+    plt.savefig("disparity_comparisons.png")
+
     plt.show()
     plt.close()
 

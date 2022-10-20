@@ -175,6 +175,8 @@ def compute_RMSE(calc_disp2):
                 MSE.append(abs(calc_disp2[i,j]-img_d[i,j]))
 
     MSE = np.array(MSE)
+    print(f'RMSE of {math.sqrt(MSE.mean()):.2f}')
+
     for i in [0.25,0.5,1,2,4][::-1]:
         print(f'Fraction of {len(MSE[MSE < i])/len(img_d[img_d>0]):.2f} with pixel error less than {i} pixels')
 
