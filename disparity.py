@@ -1,10 +1,12 @@
 import os 
 import math
 import matplotlib.pyplot as plt 
+from matplotlib import cm
 import numpy as np
 import cv2
 import multiprocessing as mp
 import time
+from scipy import ndimage
 
 # Import images 
 directory = './Dataset/'
@@ -53,7 +55,7 @@ img_d = np.int32(cv2.resize(img_d.astype('float32'), dim, interpolation = cv2.IN
 
 h,w = img_r_grey.shape
 
-boundary_size = 3
+boundary_size = 2
 neighbourhood_l = 200
 neighbourhood_r = 50
 step_size = 1
@@ -66,7 +68,7 @@ max_bound = np.int32(len(img_l_grey[0])-boundary_size)
 
 from skimage.graph import shortest_path, route_through_array, MCP
 # Code adapted from skimage.shortest_path algorithm
-def my_shortest_path(arr, reach=1, axis=-1, output_indexlist=False):
+def my_shortest_path(arr, reach, axis=-1, output_indexlist=False):
     # First: calculate the valid moves from any given position. Basically,
     # always move +1 along the given axis, and then can move anywhere within
     # a grid defined by the reach.
@@ -157,7 +159,7 @@ def compute_row(row_index):
     elif measure == "SSD":
         arr = np.array([[ np.inf if i > j else arr[i,j] for j in range(len(arr))] for i in range(len(arr))])
     
-    p, cost = my_shortest_path(arr, reach=5)
+    p, cost = my_shortest_path(arr, reach=3)
     p1 = np.arange(0,len(arr))
     points = np.array([[p[i], p1[i]] for i in range(len(p))])
     disp = abs(np.subtract(points[:,1], points[:,0]))
@@ -166,19 +168,25 @@ def compute_row(row_index):
     
 def compute_RMSE(calc_disp2):
     h,w = img_d.shape
-    assert(img_d.shape == calc_disp2.shape)
     MSE = []
 
     for i in range(h):
         for j in range(w):
             if img_d[i,j] != 0:
-                MSE.append(abs(calc_disp2[i,j]-img_d[i,j]))
+                MSE.append(np.square(calc_disp2[i,j]-img_d[i,j]))
 
     MSE = np.array(MSE)
     print(f'RMSE of {math.sqrt(MSE.mean()):.2f}')
 
+    pixError = []
+    for i in range(h):
+        for j in range(w):
+            if img_d[i,j] != 0:
+                pixError.append(abs(calc_disp2[i,j]-img_d[i,j]))
+
+    pixError = np.array(pixError)
     for i in [0.25,0.5,1,2,4][::-1]:
-        print(f'Fraction of {len(MSE[MSE < i])/len(img_d[img_d>0]):.2f} with pixel error less than {i} pixels')
+        print(f'Fraction of {len(pixError[pixError < i])/len(img_d[img_d>0]):.2f} with pixel error less than {i} pixels')
 
 def main():
     start = time.time()
@@ -190,14 +198,16 @@ def main():
         pool.join()
         disp_result = np.array(disp_result)
         calc_disp2[row_index,min_bound:max_bound] = disp_result
+        print("RMSE with shortest path smoothing")
+        compute_RMSE(calc_disp2)
 
-        # dim = (img_l_grey_full.shape[1], img_l_grey_full.shape[0])
-        # calc_disp2 = np.int32(cv2.resize(calc_disp2.astype('float32'), dim, interpolation = cv2.INTER_AREA))
+        calc_disp2 = ndimage.median_filter(calc_disp2, (20,3))
 
         print("RMSE with shortest path smoothing")
         compute_RMSE(calc_disp2)
         end = time.time()
         print(f"Time to process disparity image: {end-start:.2f}s")
+        
 
         plt.subplots(1,2, figsize=(15,10))
         plt.subplot(1,2,1)

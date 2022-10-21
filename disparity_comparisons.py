@@ -6,6 +6,7 @@ import cv2
 import multiprocessing as mp
 import time
 from skimage.graph import shortest_path, route_through_array, MCP
+from scipy import ndimage
 
 # Import images 
 directory = './Dataset/'
@@ -18,19 +19,20 @@ for filename in allfiles:
 
 # List of files obtained
 
-# Perform on first image for now 
-
+# Perform on one image for now 
 file = filenames[0]
 
 left_image_name = directory + file + 'left.jpg'
 right_image_name = directory+ file + 'right.jpg'
 disp_image_name = directory+ file + 'disparity.png'
 
-# Read images and convert to RGB 
+# Read images
 img_l = cv2.imread(left_image_name)
 img_r = cv2.imread(right_image_name)
+img_l_grey_raw = cv2.cvtColor(img_l, cv2.COLOR_BGR2GRAY)
+img_r_grey_raw = cv2.cvtColor(img_r, cv2.COLOR_BGR2GRAY)
 
-# Grey images
+# Convert to grey images
 img_l_grey_full = np.int32(cv2.cvtColor(img_l, cv2.COLOR_BGR2GRAY))
 img_r_grey_full = np.int32(cv2.cvtColor(img_r, cv2.COLOR_BGR2GRAY))
 img_l_grey = img_l_grey_full
@@ -43,24 +45,21 @@ img_d = cv2.imread(disp_image_name,-1)/256.0
 
 
 # note: can perform downscaling of the images to speed up computation at the cost of quality degradation
-# scale_percentage = 30
+# scale_percentage = 20
 # width = int(img_l_grey_full.shape[1] * scale_percentage / 100)
 # height = int(img_l_grey_full.shape[0] * scale_percentage / 100)
 # dim = (width, height)
 # img_l_grey = np.int32(cv2.resize(img_l_grey_full.astype('float32'), dim, interpolation = cv2.INTER_AREA))
 # img_r_grey = np.int32(cv2.resize(img_r_grey_full.astype('float32'), dim, interpolation = cv2.INTER_AREA))
-# img_d = np.int32(cv2.resize(img_d.astype('float32'), dim, interpolation = cv2.INTER_AREA))
+# img_d = cv2.resize(img_d.astype('float32'), dim, interpolation = cv2.INTER_AREA)
 
 h,w = img_r_grey.shape
+boundary_nosmooth = 10
 boundary_size = 2
 neighbourhood_l = 200
 neighbourhood_r = 50
 step_size = 1
 measure = "NCC"
-
-# Take horizontal window to search, ensuring values don't exceed bounds
-min_bound = np.int32(boundary_size)
-max_bound = np.int32(len(img_l_grey[0])-boundary_size)
 
 
 # Code adapted from skimage.shortest_path algorithm
@@ -113,27 +112,27 @@ def my_shortest_path(arr, reach=1, axis=-1, output_indexlist=False):
 def compute_row_nosmooth(row_index):
     row = img_l_grey[row_index]
     disp = []
-    for col_index_left in range(boundary_size,len(row)-boundary_size, step_size):
+    for col_index_left in range(boundary_nosmooth,len(row)-boundary_nosmooth, step_size):
         
         centre_l = [row_index, col_index_left]
 
-        min_l_x = centre_l[1] - boundary_size
-        max_l_x = centre_l[1] + boundary_size + 1
+        min_l_x = centre_l[1] - boundary_nosmooth
+        max_l_x = centre_l[1] + boundary_nosmooth + 1
 
-        min_l_y = centre_l[0] - boundary_size
-        max_l_y = centre_l[0] + boundary_size + 1
+        min_l_y = centre_l[0] - boundary_nosmooth
+        max_l_y = centre_l[0] + boundary_nosmooth + 1
 
         patch_l = img_l_grey[min_l_y:max_l_y, min_l_x:max_l_x]
 
         # Take horizontal window to search, ensuring values don't exceed bounds
-        min_bound = max(col_index_left-neighbourhood_l, boundary_size)
-        max_bound = min(col_index_left+neighbourhood_r, len(row)-boundary_size)
+        min_bound = max(col_index_left-neighbourhood_l, boundary_nosmooth)
+        max_bound = min(col_index_left+neighbourhood_r, len(row)-boundary_nosmooth)
         
         # Indices of all column centres to check
         col_centres = np.arange(min_bound,max_bound) 
         
-        # Generate arrays for each column centre in steps of 1 using the boundary size, each having 2*boundary_size elements
-        col_linspace = np.int32(np.transpose(np.linspace(col_centres-boundary_size, col_centres+boundary_size, 2*boundary_size+1)))
+        # Generate arrays for each column centre in steps of 1 using the boundary size, each having 2*boundary_nosmooth elements
+        col_linspace = np.int32(np.transpose(np.linspace(col_centres-boundary_nosmooth, col_centres+boundary_nosmooth, 2*boundary_nosmooth+1)))
 
         # Generate right patch using the constant rows in loop iteration and column arrays, transpose to get correct shape
         patch_r = np.transpose(img_r_grey[min_l_y:max_l_y, col_linspace], (1,0,2)) 
@@ -163,6 +162,9 @@ def compute_row_path(row_index):
 
         min_l_y = centre_l[0] - boundary_size
         max_l_y = centre_l[0] + boundary_size + 1
+
+        min_bound = np.int32(boundary_size)
+        max_bound = np.int32(len(img_l_grey[row_index])-boundary_size)
 
         patch_l = img_l_grey[min_l_y:max_l_y, min_l_x:max_l_x]
 
@@ -201,36 +203,54 @@ def compute_row_path(row_index):
 
     return disp
     
-def compute_RMSE(calc_disp2):
+def compute_RMSE(disp):
     h,w = img_d.shape
-    assert(img_d.shape == calc_disp2.shape)
+    assert(img_d.shape == disp.shape)
     MSE = []
 
     for i in range(h):
         for j in range(w):
             if img_d[i,j] != 0:
-                MSE.append(np.square(calc_disp2[i,j]-img_d[i,j]))
-
+                MSE.append(np.square(disp[i,j]-img_d[i,j]))
     MSE = np.array(MSE)
     print(f'RMSE of {math.sqrt(MSE.mean()):.2f}')
 
+    pixError = []
+    for i in range(h):
+        for j in range(w):
+            if img_d[i,j] != 0:
+                pixError.append(abs(disp[i,j]-img_d[i,j]))
+
+    pixError = np.array(pixError)
     for i in [0.25,0.5,1,2,4][::-1]:
-        print(f'Fraction of {len(MSE[MSE < i])/len(img_d[img_d>0]):.2f} with pixel error less than {i} pixels')
+        print(f'Fraction of {len(pixError[pixError < i])/len(img_d[img_d>0]):.2f} with pixel error less than {i} pixels')
+
 
 def main():
     start = time.time()
     calc_disp1 = np.zeros((h,w))
     calc_disp2 = np.zeros((h,w))
+    calc_disp3 = np.zeros((h,w))
     bilateral_disp = np.zeros((h,w))
+    row_index_nosmooth = [i for i in range(boundary_nosmooth, len(img_l_grey)-boundary_nosmooth, step_size)]
     row_index = [i for i in range(boundary_size, len(img_l_grey)-boundary_size, step_size)]
+    median_filter_size = (23,23)
+
+    # Take horizontal window to search, ensuring values don't exceed bounds
+    min_bound = np.int32(boundary_size)
+    max_bound = np.int32(len(img_l_grey[0])-boundary_size)
+
+    min_bound_nosmooth = np.int32(boundary_nosmooth)
+    max_bound_nosmooth = np.int32(len(img_l_grey[0])-boundary_nosmooth)
+
 
     with mp.Pool(processes = mp.cpu_count()-1) as pool:
-        disp_result = pool.map(compute_row_nosmooth, row_index)
+        disp_result = pool.map(compute_row_nosmooth, row_index_nosmooth)
         pool.close()
         pool.join()
         disp_result = np.array(disp_result)
-        calc_disp1[row_index,min_bound:max_bound] = disp_result
-        bilateral_disp = cv2.bilateralFilter(np.uint8(calc_disp1),boundary_size*2+1,100,100)
+        calc_disp1[row_index_nosmooth, min_bound_nosmooth:max_bound_nosmooth] = disp_result
+        bilateral_disp = cv2.bilateralFilter(np.uint8(calc_disp1),3, 70, 70)
 
     with mp.Pool(processes = mp.cpu_count()-1) as pool:
         disp_result = pool.map(compute_row_path, row_index)
@@ -238,7 +258,9 @@ def main():
         pool.join()
         disp_result = np.array(disp_result)
         calc_disp2[row_index,min_bound:max_bound] = disp_result
+        calc_disp3 = ndimage.median_filter(calc_disp2, median_filter_size)
 
+    end = time.time()
 
     print()
     print("No smoothing:")
@@ -249,26 +271,41 @@ def main():
     print()    
     print("Shortest path smoothing:")
     compute_RMSE(calc_disp2)
-    end = time.time()
+    print()    
+    print(f"Shortest path smoothing with median filter of size {median_filter_size}:")
+    compute_RMSE(calc_disp3)
     print(f"Time to process disparity images: {end-start:.2f}s")
 
-    plt.subplots(2,2, figsize=(15,10))
-    plt.subplot(2,2,1)
-    plt.imshow(calc_disp1, cmap='plasma',vmin=0)
-    plt.title('Disparity image with no smoothing')
+    colourmap = 'jet'
+    plt.subplots(3,2, figsize=(20,10))
+    plt.subplot(3,2,1)
+    plt.imshow(calc_disp1, cmap=colourmap,vmin=0)
+    plt.title(f'Disparity image with no smoothing (Window = {boundary_nosmooth*2+1}x{boundary_nosmooth*2+1})')
 
-    plt.subplot(2,2,2)
-    plt.imshow(bilateral_disp, cmap='plasma',vmin=0)
-    plt.title('Disparity image with bilateral filter smoothing')
+    plt.subplot(3,2,2)
+    plt.imshow(bilateral_disp, cmap=colourmap,vmin=0)
+    plt.title(f'Disparity image with bilateral filter smoothing (Window = {boundary_nosmooth*2+1}x{boundary_nosmooth*2+1})')
 
-    plt.subplot(2,2,3)
-    plt.imshow(calc_disp2, cmap='plasma',vmin=0)
-    plt.title('Disparity image using shortest path')
+    plt.subplot(3,2,3)
+    plt.imshow(calc_disp2, cmap=colourmap,vmin=0)
+    plt.title(f'Disparity image using shortest path (Window = {boundary_size*2+1}x{boundary_size*2+1})')
 
-    plt.subplot(2,2,4)
-    plt.imshow(img_d, cmap='plasma',vmin=0)
+    plt.subplot(3,2,4)
+    plt.imshow(calc_disp3, cmap=colourmap,vmin=0)
+    plt.title('Ground truth')
+    plt.title(f'Disparity image using shortest path and median filter (Window = {boundary_size*2+1}x{boundary_size*2+1})')
+
+    plt.subplot(3,2,5)
+    plt.imshow(img_d, cmap=colourmap,vmin=0)
     plt.title('Ground truth')
     plt.savefig("disparity_comparisons.png")
+
+    plt.subplot(3,2,6)
+    plt.imshow(img_d, cmap=colourmap,vmin=0)
+    plt.title('Ground truth')
+    plt.savefig("disparity_comparisons.png")
+
+    plt.delaxes()
 
     plt.show()
     plt.close()
