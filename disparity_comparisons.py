@@ -20,7 +20,7 @@ for filename in allfiles:
 # List of files obtained
 
 # Perform on one image for now 
-file = filenames[0]
+file = filenames[3]
 
 left_image_name = directory + file + 'left.jpg'
 right_image_name = directory+ file + 'right.jpg'
@@ -56,8 +56,8 @@ img_d = cv2.imread(disp_image_name,-1)/256.0
 h,w = img_r_grey.shape
 boundary_nosmooth = 10
 boundary_size = 2
-neighbourhood_l = 200
-neighbourhood_r = 50
+neighbourhood_l = 150
+neighbourhood_r = 1
 step_size = 1
 measure = "NCC"
 
@@ -112,6 +112,7 @@ def my_shortest_path(arr, reach=1, axis=-1, output_indexlist=False):
 def compute_row_nosmooth(row_index):
     row = img_l_grey[row_index]
     disp = []
+
     for col_index_left in range(boundary_nosmooth,len(row)-boundary_nosmooth, step_size):
         
         centre_l = [row_index, col_index_left]
@@ -123,6 +124,7 @@ def compute_row_nosmooth(row_index):
         max_l_y = centre_l[0] + boundary_nosmooth + 1
 
         patch_l = img_l_grey[min_l_y:max_l_y, min_l_x:max_l_x]
+        # patch_l = cv2.GaussianBlur(np.float32(patch_l), (boundary_nosmooth*2+1, boundary_nosmooth*2+1), 1)
 
         # Take horizontal window to search, ensuring values don't exceed bounds
         min_bound = max(col_index_left-neighbourhood_l, boundary_nosmooth)
@@ -134,8 +136,11 @@ def compute_row_nosmooth(row_index):
         # Generate arrays for each column centre in steps of 1 using the boundary size, each having 2*boundary_nosmooth elements
         col_linspace = np.int32(np.transpose(np.linspace(col_centres-boundary_nosmooth, col_centres+boundary_nosmooth, 2*boundary_nosmooth+1)))
 
+
         # Generate right patch using the constant rows in loop iteration and column arrays, transpose to get correct shape
         patch_r = np.transpose(img_r_grey[min_l_y:max_l_y, col_linspace], (1,0,2)) 
+        # patch_r = cv2.GaussianBlur(np.float32(patch_r), (boundary_nosmooth*2+1, boundary_nosmooth*2+1), 1)
+
         
         # Choose distance measure to generate disparity map
         if measure == "NCC":
@@ -167,6 +172,7 @@ def compute_row_path(row_index):
         max_bound = np.int32(len(img_l_grey[row_index])-boundary_size)
 
         patch_l = img_l_grey[min_l_y:max_l_y, min_l_x:max_l_x]
+        patch_l = cv2.GaussianBlur(np.float32(patch_l), (boundary_size*2+1, boundary_size*2+1), 1)
 
         # Indices of all column centres to check
         col_centres = np.arange(min_bound,max_bound) 
@@ -177,6 +183,7 @@ def compute_row_path(row_index):
         # Generate right patch using the constant rows in loop iteration and column arrays, transpose to get correct shape
 
         patch_r = np.transpose(img_r_grey[min_l_y:max_l_y, col_linspace], (1,0,2)) 
+        patch_r = cv2.GaussianBlur(np.float32(patch_r), (boundary_size*2+1, boundary_size*2+1), 1)
 
 
         # Choose distance measure to generate disparity map
@@ -234,7 +241,7 @@ def main():
     bilateral_disp = np.zeros((h,w))
     row_index_nosmooth = [i for i in range(boundary_nosmooth, len(img_l_grey)-boundary_nosmooth, step_size)]
     row_index = [i for i in range(boundary_size, len(img_l_grey)-boundary_size, step_size)]
-    median_filter_size = (23,23)
+    median_filter_size =  23
 
     # Take horizontal window to search, ensuring values don't exceed bounds
     min_bound = np.int32(boundary_size)
@@ -250,7 +257,9 @@ def main():
         pool.join()
         disp_result = np.array(disp_result)
         calc_disp1[row_index_nosmooth, min_bound_nosmooth:max_bound_nosmooth] = disp_result
-        bilateral_disp = cv2.bilateralFilter(np.uint8(calc_disp1),3, 70, 70)
+        # bilateral_disp = cv2.bilateralFilter(np.uint8(calc_disp1), 23, 30, 30)
+        bilateral_disp = ndimage.median_filter(np.uint8(calc_disp1), 10)
+
 
     with mp.Pool(processes = mp.cpu_count()-1) as pool:
         disp_result = pool.map(compute_row_path, row_index)
